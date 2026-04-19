@@ -1,0 +1,24 @@
+# Virtual environment
+.venv
+
+# Generated output & raw data
+output
+data
+
+# Test cache
+.pytest_cache
+
+# Python bytecode (all directories)
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# macOS metadata
+.DS_Store
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints
+**/.ipynb_checkpoints
+
+# Scratch / one-off scripts
+scratch

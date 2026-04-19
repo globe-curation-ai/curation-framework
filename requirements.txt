@@ -1,0 +1,34 @@
+# ==========================================
+# GLOBE Curation AI - Dependencies
+# ==========================================
+
+# Data Manipulation & I/O
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+PyYAML>=6.0.1
+
+# Bayesian Modeling & Inference
+pymc>=5.10.0
+arviz>=0.17.0
+pytensor>=2.18.0
+xarray>=2023.1.0
+netCDF4>=1.6.0
+h5netcdf>=1.3.0
+scipy>=1.11.0
+
+# Geospatial & Mapping
+cartopy>=0.22.0
+shapely>=2.0.0
+
+# Visualization & Notebooks
+matplotlib>=3.7.0
+seaborn>=0.13.0
+jupyter>=1.0.0
+jupyterlab>=4.0.0
+ipykernel>=6.25.0
+ipython>=8.0.0
+nbformat>=5.9
+
+# Testing & Quality Assurance
+pytest>=8.0.0

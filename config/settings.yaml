@@ -1,0 +1,63 @@
+# -----------------------------------------------------------------------------
+# FILE PATHS
+# -----------------------------------------------------------------------------
+paths:
+  database: "data/master_registry.sqlite"
+  observations: "data/observations/"
+  site_info: "data/site_info/"
+  flagged_output: "data/flagged/"
+  logs: "logs/"
+
+# -----------------------------------------------------------------------------
+# DATA SOURCES
+# -----------------------------------------------------------------------------
+data_sources:
+  observations_base_url: "https://assets.globe.gov/protocol-data/transparencies/transparencies{year}.csv"
+  start_year: 1995
+  end_year: 2025
+  site_info_url: "https://assets.globe.gov/site-data/hydrologySiteVersions.csv"
+  site_info_filename: "hydrologySiteVersions.csv"
+
+# -----------------------------------------------------------------------------
+# DATA VALIDATION & HEURISTICS
+# -----------------------------------------------------------------------------
+validation:
+  confidence_level: 0.95
+  z_score_threshold: 1.96
+
+  # Physical bounds for validation heuristics
+  disk_tolerance_m: 0.5
+  tube_tolerance_cm: 2.0
+  max_tube_cm: 130.0
+
+# -----------------------------------------------------------------------------
+# CONCEPT DRIFT & WEIGHTING
+# -----------------------------------------------------------------------------
+drift:
+  window_years: 10
+  min_weight: 0.1
+
+# -----------------------------------------------------------------------------
+# BAYESIAN HIERARCHY MAPPING
+# -----------------------------------------------------------------------------
+# Defines the Level 1 prior pooling category
+water_type_col: "water_body_source"
+
+# -----------------------------------------------------------------------------
+# BAYESIAN MODEL PARAMETERS & PRIORS
+# -----------------------------------------------------------------------------
+bayesian_model:
+  draws: 4000
+  tune: 2000
+  chains: 4
+  target_accept: 0.95
+
+  # Target columns using original NASA GLOBE terminology
+  disk_target_col: "transparency_disk_image_disappearance_m"
+  tube_target_col: "tube_image_disappearance_cm"
+
+  priors:
+    global_baseline_mu: 2.5
+    global_baseline_sigma: 1.0
+    site_offset_sigma: 0.5
+    observation_noise: 0.2
