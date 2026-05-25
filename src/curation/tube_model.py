@@ -20,6 +20,7 @@ class BayesianTubeModel:
         val_params = config.get('validation', {})
 
         self.target_col = bayesian_params.get('tube_target_col', 'tube_image_disappearance_cm')
+        self.active_tube_length_col = bayesian_params.get('active_tube_length_col', 'tube_len_mle_site')
         self.date_col = config.get('date_col', 'measured_on')
         self.site_col = config.get('site_col', 'site_id')
         self.max_tube_cm = val_params.get('max_tube_cm', 130.0)
@@ -74,9 +75,19 @@ class BayesianTubeModel:
         self.df_valid[val_col] = pd.to_numeric(self.df_valid[val_col], errors='coerce')
         self.df_valid = self.df_valid.dropna(subset=[val_col]).copy()
 
-        epsilon = 0.1
+        # Prepare the dynamic max tube length
+        if self.active_tube_length_col not in self.df_valid.columns:
+            self.df_valid[self.active_tube_length_col] = self.max_tube_cm
+            
+        self.df_valid[self.active_tube_length_col] = pd.to_numeric(self.df_valid[self.active_tube_length_col], errors='coerce')
+        # Fall back to max_tube_cm if estimate is missing or 0.0
+        self.df_valid.loc[self.df_valid[self.active_tube_length_col].isna() | (self.df_valid[self.active_tube_length_col] <= 0), self.active_tube_length_col] = self.max_tube_cm
+
+        epsilon = 1.0
         self.df_valid.loc[self.df_valid[val_col] <= 0, val_col] = epsilon
-        self.df_valid.loc[self.df_valid[val_col] >= self.max_tube_cm, val_col] = self.max_tube_cm - epsilon
+        # Ensure measurements don't exceed their dynamically estimated limits
+        self.df_valid['dynamic_limit'] = self.df_valid[self.active_tube_length_col]
+        self.df_valid.loc[self.df_valid[val_col] >= self.df_valid['dynamic_limit'], val_col] = self.df_valid['dynamic_limit'] - epsilon
 
         self.df_valid[date_col] = pd.to_datetime(self.df_valid[date_col])
 
@@ -94,7 +105,8 @@ class BayesianTubeModel:
 
     def build_model(self):
         """
-        Constructs the PyMC hierarchical model using Truncated Normal likelihoods.
+        Constructs the PyMC hierarchical model with a weighted Potential-based
+        log-likelihood from Truncated Normal distributions.
         Utilizes Non-Centered Parameterization.
         """
         self.site_idx, self.sites = pd.factorize(self.df_valid[self.site_col])
@@ -116,6 +128,7 @@ class BayesianTubeModel:
             water_source_idx_data = pm.Data("water_source_idx", self.site_water_source_idx)
             obs_data = pm.Data("obs", self.df_valid[self.target_col].values)
             weights = pm.Data("weights", self.df_valid['weight'].values)
+            upper_bounds = pm.Data("upper_bounds", self.df_valid['dynamic_limit'].values)
 
             global_mu = pm.Normal("global_mu", mu=self.max_tube_cm / 2, sigma=self.max_tube_cm / 4, initval=init_mu)
             global_sigma = pm.HalfNormal("global_sigma", sigma=20.0, initval=10.0)
@@ -149,14 +162,14 @@ class BayesianTubeModel:
                 mu=site_mu[site_idx_data],
                 sigma=obs_sigma,
                 lower=0.0,
-                upper=self.max_tube_cm
+                upper=upper_bounds
             )
             logp = pm.logp(dist, obs_data)
             pm.Deterministic("log_lik", weights * logp)
             pm.Potential("weighted_logp", pm.math.sum(weights * logp))
 
     def sample(self):
-        """Executes the MCMC sampler and generates posterior predictive checks."""
+        """Executes the MCMC sampler and generates posterior predictive samples."""
         with self.model:
             self.trace = pm.sample(
                 draws=self.draws,
@@ -167,7 +180,7 @@ class BayesianTubeModel:
                 return_inferencedata=True,
                 nuts_sampler_kwargs={"max_treedepth": 15}
             )
-            # Instructs the sampler to simulate data based on the trained posteriors
+            # Forward-samples simulated observations from the trained posteriors
             pm.sample_posterior_predictive(self.trace, extend_inferencedata=True)
             self.trace.add_groups({"log_likelihood": {"obs": self.trace.posterior["log_lik"]}})
 
@@ -191,7 +204,8 @@ class BayesianTubeModel:
         mu_obs = mu_samples[:, self.site_idx]
 
         a = (0.0 - mu_obs) / sigma_samples[:, None]
-        b = (self.max_tube_cm - mu_obs) / sigma_samples[:, None]
+        dynamic_limits = self.df_valid['dynamic_limit'].values
+        b = (dynamic_limits - mu_obs) / sigma_samples[:, None]
         simulated_obs = truncnorm.rvs(a, b, loc=mu_obs, scale=sigma_samples[:, None])
 
         lower_bound, upper_bound = np.percentile(simulated_obs, [2.5, 97.5], axis=0)

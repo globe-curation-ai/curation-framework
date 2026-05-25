@@ -28,7 +28,7 @@ validation:
   # Physical bounds for validation heuristics
   disk_tolerance_m: 0.5
   tube_tolerance_cm: 2.0
-  max_tube_cm: 130.0
+  max_tube_cm: 122.0
 
 # -----------------------------------------------------------------------------
 # CONCEPT DRIFT & WEIGHTING
@@ -55,6 +55,9 @@ bayesian_model:
   # Target columns using original NASA GLOBE terminology
   disk_target_col: "transparency_disk_image_disappearance_m"
   tube_target_col: "tube_image_disappearance_cm"
+  
+  # Tube length estimation method
+  active_tube_length_col: "tube_len_mle_site"
 
   priors:
     global_baseline_mu: 2.5

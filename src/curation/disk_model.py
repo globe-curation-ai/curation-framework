@@ -85,7 +85,7 @@ class BayesianDiskModel:
         self.df_valid = self.df_valid[self.df_valid['weight'] > 0.0].copy()
 
     def build_model(self):
-        """Constructs the PyMC hierarchical model incorporating weighted likelihoods."""
+        """Constructs the PyMC hierarchical model with a weighted Potential-based log-likelihood."""
         self.site_idx, self.sites = pd.factorize(self.df_valid[self.site_col])
 
         site_mapping = self.df_valid.drop_duplicates(subset=[self.site_col]).set_index(self.site_col)
@@ -141,7 +141,7 @@ class BayesianDiskModel:
             pm.Potential("weighted_logp", pm.math.sum(weights * logp))
 
     def sample(self):
-        """Executes the MCMC sampler and generates posterior predictive checks."""
+        """Executes the MCMC sampler and generates posterior predictive samples."""
         with self.model:
             self.trace = pm.sample(
                 draws=self.draws,
@@ -152,7 +152,7 @@ class BayesianDiskModel:
                 return_inferencedata=True,
                 nuts_sampler_kwargs={"max_treedepth": 15}
             )
-            # Instructs the sampler to simulate data based on the trained posteriors
+            # Forward-samples simulated observations from the trained posteriors
             pm.sample_posterior_predictive(self.trace, extend_inferencedata=True)
             self.trace.add_groups({"log_likelihood": {"obs": self.trace.posterior["log_lik"]}})
 

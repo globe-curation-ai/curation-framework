@@ -9,6 +9,7 @@ from src.curation.disk_validator import validate_secchi_data
 from src.curation.tube_validator import validate_tube_data
 from src.curation.disk_model import BayesianDiskModel
 from src.curation.tube_model import BayesianTubeModel
+from src.curation.tube_length_estimator import apply_all_tube_estimations
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="arviz")
 
@@ -32,10 +33,10 @@ def print_summary(instrument_name: str, df: pd.DataFrame) -> None:
     is_censored = df.get('is_censored', pd.Series(False, index=df.index)).astype(bool)
 
     # Calculate mutually exclusive subsets so they sum exactly to the total
-    heuristic_errors = (~passed_h).sum()
-    censored = (passed_h & is_censored).sum()
-    outliers = (passed_h & ~is_censored & is_outlier).sum()
-    valid = (passed_h & ~is_censored & ~is_outlier).sum()
+    censored = is_censored.sum()
+    heuristic_errors = (~passed_h & ~is_censored).sum()
+    outliers = (passed_h & is_outlier).sum()
+    valid = (passed_h & ~is_outlier).sum()
 
     print(f"{instrument_name.upper()} SUMMARY:")
     print(f"  Total Observations: {total}")
@@ -88,6 +89,9 @@ def main():
 
     if not df_tube.empty:
         print(f"\n--- Processing {len(df_tube)} Transparency Tube records ---")
+        print("  -> Applying tube length estimations...")
+        df_tube = apply_all_tube_estimations(df_tube)
+
         validated_tube = validate_tube_data(df_tube, config)
 
         print("  -> Initializing Bayesian inference model...")

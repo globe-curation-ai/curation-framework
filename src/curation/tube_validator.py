@@ -25,6 +25,16 @@ def validate_tube_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     missing_mask = df_flagged[val_col].isna()
     df_flagged.loc[missing_mask, 'passed_heuristics'] = False
 
+    # Get dynamic tube lengths if available
+    active_tube_length_col = config.get('bayesian_model', {}).get('active_tube_length_col', 'tube_len_mle_site')
+    if active_tube_length_col in df_flagged.columns:
+        raw_tube_lengths = pd.to_numeric(df_flagged[active_tube_length_col], errors='coerce').replace(0.0, np.nan)
+        tube_lengths = raw_tube_lengths.fillna(config.get('validation', {}).get('max_tube_cm', 122.0))
+        has_estimate_mask = raw_tube_lengths.notna()
+    else:
+        tube_lengths = config.get('validation', {}).get('max_tube_cm', 122.0)
+        has_estimate_mask = pd.Series(False, index=df_flagged.index)
+
     # 2. Track Right-Censored Data (Perfectly clear water)
     if saturated_col in df_flagged.columns:
         true_conditions = [True, 'True', 'true', '1', 1, 'Yes', 'yes', 'T', 't']
@@ -33,13 +43,19 @@ def validate_tube_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         # Mark as censored so you can analyze clear water later
         df_flagged.loc[censored_mask, 'is_censored'] = True
 
-        # Censored data MUST fail heuristics so it doesn't break the continuous Bayesian model
-        df_flagged.loc[censored_mask, 'passed_heuristics'] = False
+    # Also infer censorship if the reading hits or exceeds the estimated hardware limit
+    hit_limit_mask = df_flagged[val_col] >= tube_lengths
+    df_flagged.loc[hit_limit_mask, 'is_censored'] = True
+
+    # Censored data MUST fail heuristics so it doesn't break the continuous Bayesian model
+    df_flagged.loc[df_flagged['is_censored'], 'passed_heuristics'] = False
 
     # 3. Catch Negative Values, Zeros, and Extreme Typos
-    max_cm = config.get('max_tube_cm', 130.0)
+    max_cm = config.get('validation', {}).get('max_tube_cm', 122.0)
     invalid_range_mask = (df_flagged[val_col] <= 0) | (df_flagged[val_col] > max_cm)
     df_flagged.loc[invalid_range_mask, 'passed_heuristics'] = False
+    # If it's physically impossible (> max_cm), it shouldn't be considered valid clear water
+    df_flagged.loc[invalid_range_mask, 'is_censored'] = False
 
     # 4. Catch Environmental Contradictions
     if state_col in df_flagged.columns:
@@ -48,11 +64,12 @@ def validate_tube_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         state_mask = current_states.isin(invalid_states)
         df_flagged.loc[state_mask, 'passed_heuristics'] = False
 
-    # 5. Logical Mismatch (Claimed clear water, but recorded a low depth)
+    # 5. Logical Mismatch (Claimed clear water, but reading is far below the estimated tube length)
     if saturated_col in df_flagged.columns:
-        # Standard tubes are 60cm or 120cm. A "does not disappear" reading of < 40cm
-        # is almost certainly a user error/contradiction, not valid clear water.
-        mismatch_mask = df_flagged['is_censored'] & (df_flagged[val_col] < 40.0)
+        # A "does not disappear" reading should be near the full tube length.
+        # If the reading is significantly lower than the estimated tube length, it's a mismatch.
+        # We only apply this check if we actually have a confident MLE estimate for the site.
+        mismatch_mask = df_flagged['is_censored'] & has_estimate_mask & (df_flagged[val_col] < (tube_lengths - 5.0))
 
         # Revoke the censored status so it gets counted properly as a heuristic error
         df_flagged.loc[mismatch_mask, 'is_censored'] = False

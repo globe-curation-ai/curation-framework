@@ -51,16 +51,16 @@ def validate_secchi_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
     # 5. Saturation and Physical Mismatch Logic
     if depth_col in df_flagged.columns:
-        tolerance = config.get('disk_tolerance_m', 0.5)
+        tolerance = config.get('validation', {}).get('disk_tolerance_m', 0.5)
 
         temp_depth = pd.to_numeric(df_flagged[depth_col], errors='coerce')
         has_depth_mask = temp_depth.notna()
 
-        # Mismatch A: User claimed disk didn't disappear, but the reading is much shallower than the known lake depth
+        # Mismatch A: User claimed disk didn't disappear, but the reading is much shallower than the known water body depth
         invalid_saturation = has_depth_mask & df_flagged['is_censored'] & (
                     df_flagged[val_col] < (temp_depth - tolerance))
 
-        # Mismatch B: User claimed disk DID disappear, but the reading is physically deeper than the lake itself
+        # Mismatch B: User claimed disk DID disappear, but the reading is physically deeper than the water body itself
         invalid_unsaturation = has_depth_mask & (~df_flagged['is_censored']) & (
                     df_flagged[val_col] >= (temp_depth + tolerance))
 
