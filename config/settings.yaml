@@ -19,6 +19,20 @@ data_sources:
   site_info_filename: "hydrologySiteVersions.csv"
 
 # -----------------------------------------------------------------------------
+# DISTANCE TO WATER BODY
+# -----------------------------------------------------------------------------
+distance_to_water:
+  enabled: true
+  database: "data/water_distances.sqlite"
+  distance_method: combined    # Options: combined | osm_first | gee_first | osm_only | gee_only
+  osm_radius_m: 1000           # Max OSM query radius
+  max_distance_m: 1000         # Cap / "not found" sentinel value
+  ndwi_threshold: 0.3          # NDWI > threshold = water pixel
+  cloud_cover_max_pct: 5       # Sentinel-2 cloud filter
+  sentinel_pixel_m: 10         # Sentinel-2 spatial resolution (meters)
+  gee_project: null            # GCP project ID for Earth Engine (if null, falls back to local credentials)
+
+# -----------------------------------------------------------------------------
 # DATA VALIDATION & HEURISTICS
 # -----------------------------------------------------------------------------
 validation:
@@ -48,7 +62,7 @@ water_type_col: "water_body_source"
 # -----------------------------------------------------------------------------
 bayesian_model:
   draws: 4000
-  tune: 2000
+  tune: 4000
   chains: 4
   target_accept: 0.95
 

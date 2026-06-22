@@ -20,6 +20,12 @@ scipy>=1.11.0
 # Geospatial & Mapping
 cartopy>=0.22.0
 shapely>=2.0.0
+osmnx>=2.0.0
+geopandas>=0.14.0
+geopy>=2.4.0
+
+# Satellite Imagery (optional — needed for Sentinel-2 integration)
+earthengine-api>=1.4.0
 
 # Visualization & Notebooks
 matplotlib>=3.7.0

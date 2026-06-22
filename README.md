@@ -8,12 +8,12 @@ To address the inherent variability in citizen science data and the dynamic natu
 
 The framework operates as a continuous, automated loop consisting of six distinct stages of data processing and parameter refinement:
 
-1. **Ingest & Expand:** Raw data is associated with multi-source site metadata.
-2. **Validate Samples:** Incoming observations are evaluated via a Posterior Predictive Check (PPC) against site-specific baselines.
-3. **Merge to Registry:** All observations are merged with the Master Registry. Statistical outliers are flagged.
+1. **Ingest & Expand:** Raw data is associated with multi-source site metadata and enriched with spatial features (e.g., Earth Engine / OSM distance-to-water computations).
+2. **Heuristic Validation:** Incoming observations undergo strict heuristic filtering to catch extreme typos, physically impossible states, and observations far from mapped water bodies.
+3. **Bayesian Validation:** The surviving observations are evaluated via a Posterior Predictive Check (PPC) against site-specific Bayesian Hierarchical baselines.
 4. **Update Master Registry:** The normalized site metadata and time-series measurements are persistently stored in an SQLite database.
-5. **Audit & Review:** Copies of flagged statistical outliers are exported to flat CSV files for extreme-event verification by human reviewers, while remaining in the registry.
-6. **Retrain Model & Publish:** The BHM is recalibrated using the curated observations in the Master Registry (excluding the flagged statistical outliers), and the authoritative dataset is published.
+5. **Audit & Review:** Copies of flagged outliers and heuristic failures are exported to flat CSV files for verification by human reviewers, while remaining in the registry.
+6. **Retrain Model & Publish:** The BHM is recalibrated using the curated observations in the Master Registry (excluding the flagged anomalies), and the authoritative dataset is published.
 
 ## Handling Environmental Concept Drift
 
@@ -41,6 +41,7 @@ where t is the continuous sample age in years. The statistical influence of an o
     │   ├── observations/              # GLOBE measurement CSVs will be downloaded here
     │   ├── site_info/                 # GLOBE site info CSV will be downloaded here
     │   ├── master_registry.sqlite     # The persistent SQLite Master Registry
+    │   ├── water_distances.sqlite     # Static distance to water cache
     │   └── flagged/                   # Audit logs for flagged anomalies
     │
     ├── output/                        # Pipeline generated artifacts
@@ -63,7 +64,9 @@ where t is the continuous sample age in years. The statistical influence of an o
     │       ├── disk_validator.py      # Secchi Disk heuristic rules
     │       ├── tube_validator.py      # Transparency Tube heuristic rules
     │       ├── disk_model.py          # PyMC Log-Normal BHM with Temporal Weighting
-    │       └── tube_model.py          # PyMC Truncated-Normal BHM with Temporal Weighting
+    │       ├── tube_model.py          # PyMC Truncated-Normal BHM with Temporal Weighting
+    │       ├── distance_to_water.py   # Distance calculation via OSM / Google Earth Engine
+    │       └── tube_length_estimator.py # MLE estimation of dynamic tube lengths
     └── tests/
         ├── test_bayesian_models.py    # Mathematical and MCMC validation
         ├── test_data_ingestion.py     # Data ingestion and validation tests
@@ -94,7 +97,7 @@ If running locally without Docker, launch the notebook server manually:
 *This self-contained demo automatically fetches the last 10 years of GLOBE data, builds a local SQLite registry, and generates before-and-after density plots of the curated output.*
 
 ### 3. Configure Settings (For Full Pipeline)
-Review `config/settings.yaml` to adjust the number of Bayesian draws and tuning iterations for testing versus production runs.
+Review `config/settings.yaml`. This acts as the master control center where you can configure the spatial distance-to-water parameters (e.g., `osm_radius_m`), enable Google Earth Engine integration, set target columns, and adjust the number of Bayesian draws for testing versus production runs.
 
 ### 4. Run the Full Pipeline
 Manual data downloads are not required. Execute the master recursive curation framework:

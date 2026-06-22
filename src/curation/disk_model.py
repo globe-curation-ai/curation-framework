@@ -3,7 +3,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="arviz")
 import pandas as pd
 import numpy as np
 import pymc as pm
-import arviz as az
+import pytensor.tensor as pt
 
 
 class BayesianDiskModel:
@@ -11,6 +11,10 @@ class BayesianDiskModel:
     Bayesian hierarchical model for Secchi disk measurements.
     Applies Log-Normal distributions and continuous linear temporal weighting
     to filter systemic noise and identify concept drift over a rolling window.
+
+    Right-censored observations (disk visible at the bottom) are included
+    via a censored likelihood that contributes log P(X >= observed) instead
+    of the standard log P(X = observed).
     """
 
     def __init__(self, config: dict):
@@ -42,7 +46,9 @@ class BayesianDiskModel:
             self.df_full['passed_heuristics'] = True
 
         self.df_valid = self.df_full[self.df_full['passed_heuristics']].copy()
-        self.df_full['is_statistical_outlier'] = False
+
+        # Ternary outlier status: True (outlier), False (not outlier), None (censored, not evaluated)
+        self.df_full['is_statistical_outlier'] = None
 
         if self.df_valid.empty:
             print("No records passed heuristic gates. Bypassing Bayesian evaluation.")
@@ -68,6 +74,11 @@ class BayesianDiskModel:
         self.df_valid[val_col] = pd.to_numeric(self.df_valid[val_col], errors='coerce')
         self.df_valid = self.df_valid.dropna(subset=[val_col]).copy()
 
+        # Ensure is_censored column exists
+        if 'is_censored' not in self.df_valid.columns:
+            self.df_valid['is_censored'] = False
+
+        # Enforce positive values for all observations (LogNormal requires > 0)
         self.df_valid.loc[self.df_valid[val_col] <= 0, val_col] = 0.01
 
         self.df_valid[date_col] = pd.to_datetime(self.df_valid[date_col])
@@ -80,12 +91,17 @@ class BayesianDiskModel:
         self.df_valid['age_years'] = np.maximum(0.0, raw_age_years)
 
         self.df_valid['weight'] = np.maximum(0.0, 1.0 - (self.df_valid['age_years'] / window_years))
+
+        # Filter out zero weights
+        self.df_valid = self.df_valid[self.df_valid['weight'] > 0.0].copy()
         self.df_valid['weight'] = self.df_valid['weight'].round(5)
 
-        self.df_valid = self.df_valid[self.df_valid['weight'] > 0.0].copy()
-
     def build_model(self):
-        """Constructs the PyMC hierarchical model with a weighted Potential-based log-likelihood."""
+        """
+        Constructs the PyMC hierarchical model with a split likelihood:
+        - Uncensored observations: standard log-density (logp)
+        - Censored observations: log-survival function (log P(X >= observed))
+        """
         self.site_idx, self.sites = pd.factorize(self.df_valid[self.site_col])
 
         site_mapping = self.df_valid.drop_duplicates(subset=[self.site_col]).set_index(self.site_col)
@@ -101,11 +117,15 @@ class BayesianDiskModel:
         data_mean = self.df_valid[self.target_col].mean()
         init_mu = np.log(data_mean) if data_mean > 0 else 0.0
 
+        # Prepare censoring indicator (1.0 = censored, 0.0 = uncensored)
+        censored_indicator = self.df_valid['is_censored'].astype(float).values
+
         with pm.Model(coords=coords) as self.model:
             site_idx_data = pm.Data("site_idx", self.site_idx)
             water_source_idx_data = pm.Data("water_source_idx", self.site_water_source_idx)
             obs_data = pm.Data("obs", self.df_valid[self.target_col].values)
             weights = pm.Data("weights", self.df_valid['weight'].values)
+            is_censored_data = pm.Data("is_censored", censored_indicator)
 
             global_mu = pm.Normal("global_mu", mu=np.log(2.0), sigma=1.0, initval=init_mu)
             global_sigma = pm.HalfNormal("global_sigma", sigma=1.0, initval=0.5)
@@ -129,16 +149,32 @@ class BayesianDiskModel:
 
             site_mu = pm.Deterministic(
                 "site_mu",
-                water_source_mu[water_source_idx_data] + (site_offset * water_source_sigma[water_source_idx_data]),
+                water_source_mu[water_source_idx_data] + 
+                (site_offset * water_source_sigma[water_source_idx_data]),
                 dims="site"
             )
 
             obs_sigma = pm.HalfNormal("obs_sigma", sigma=1.0, initval=0.5)
 
+            # Build the base distribution for all observations
             dist = pm.LogNormal.dist(mu=site_mu[site_idx_data], sigma=obs_sigma)
-            logp = pm.logp(dist, obs_data)
-            pm.Deterministic("log_lik", weights * logp)
-            pm.Potential("weighted_logp", pm.math.sum(weights * logp))
+
+            # Uncensored contribution: standard log-density
+            logp_val = pm.logp(dist, obs_data)
+
+            # Censored contribution: log-survival = log P(X >= observed)
+            # log_sf = log(1 - CDF(x))
+            # Uses log1mexp for numerical stability when CDF ≈ 1.0 (avoids
+            # gradient cliffs that cause NUTS divergences).
+            # Clipped to -30 (≈ P = 1e-13) as a hard floor.
+            logcdf_val = pm.logcdf(dist, obs_data)
+            log_sf_val = pt.maximum(pt.log1mexp(logcdf_val), -30.0)
+
+            # Select the appropriate likelihood per observation
+            log_lik = pt.switch(pt.eq(is_censored_data, 1.0), log_sf_val, logp_val)
+
+            pm.Deterministic("log_lik", weights * log_lik)
+            pm.Potential("weighted_logp", pm.math.sum(weights * log_lik))
 
     def sample(self):
         """Executes the MCMC sampler and generates posterior predictive samples."""
@@ -152,14 +188,16 @@ class BayesianDiskModel:
                 return_inferencedata=True,
                 nuts_sampler_kwargs={"max_treedepth": 15}
             )
-            # Forward-samples simulated observations from the trained posteriors
-            pm.sample_posterior_predictive(self.trace, extend_inferencedata=True)
+
             self.trace.add_groups({"log_likelihood": {"obs": self.trace.posterior["log_lik"]}})
 
     def _flag_outliers(self):
         """
         Generates simulated observations from the posterior and flags true
         observations that fall outside the 95% predictive interval.
+
+        Censored observations are marked as None (not evaluated) since their
+        true value is unknown.
         """
         post = self.trace.posterior
 
@@ -179,5 +217,10 @@ class BayesianDiskModel:
 
         lower_bound, upper_bound = np.percentile(simulated_obs, [2.5, 97.5], axis=0)
 
+        # Only evaluate outlier status for uncensored observations
+        is_censored = self.df_valid['is_censored'].values
         outlier_mask = (self.df_valid[self.target_col] < lower_bound) | (self.df_valid[self.target_col] > upper_bound)
-        self.df_valid['is_statistical_outlier'] = outlier_mask
+
+        # Ternary assignment: True/False for uncensored, None for censored
+        self.df_valid['is_statistical_outlier'] = None  # default: not evaluated
+        self.df_valid.loc[~is_censored, 'is_statistical_outlier'] = outlier_mask[~is_censored]

@@ -35,8 +35,8 @@ def validate_secchi_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         # Mark as censored so clear water can be analyzed independently later
         df_flagged.loc[censored_mask, 'is_censored'] = True
 
-        # Censored data MUST fail heuristics so it doesn't skew the continuous Bayesian model
-        df_flagged.loc[censored_mask, 'passed_heuristics'] = False
+        # Censored data now flows into the Bayesian model via a custom pm.Potential likelihood.
+        # The is_censored flag tells the model to use the survival function instead of the density.
 
     # 3. Catch Zeros and Negative Values (LogNormal models fail on <= 0)
     invalid_range_mask = (df_flagged[val_col] <= 0)
@@ -48,6 +48,7 @@ def validate_secchi_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         current_states = df_flagged[state_col].fillna('').astype(str).str.lower().str.strip()
         state_mask = current_states.isin(invalid_states)
         df_flagged.loc[state_mask, 'passed_heuristics'] = False
+        df_flagged.loc[state_mask, 'is_censored'] = False
 
     # 5. Saturation and Physical Mismatch Logic
     if depth_col in df_flagged.columns:
@@ -68,13 +69,34 @@ def validate_secchi_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         df_flagged.loc[invalid_saturation, 'is_censored'] = False
         df_flagged.loc[invalid_saturation | invalid_unsaturation, 'passed_heuristics'] = False
 
+    # 6. Distance to Water Check
+    no_water_count = 0
+    if 'water_detected' in df_flagged.columns:
+        # We are only confident there is NO water if:
+        # 1. water_detected is False (OSM and GEE NDWI failed to find water)
+        # 2. ESA WorldCover explicitly classifies the pixel as Bare/Sparse (60), Snow/Ice (70), or Moss/Lichen (100)
+        # We DO NOT drop Tree Cover (10) since canopy hides water from satellites.
+        # We DO NOT drop Built-up (50) since urban canals and park ponds exist.
+        confident_no_water_mask = (
+            ~df_flagged['water_detected'].astype(bool) & 
+            df_flagged['land_cover_class'].isin([60.0, 70.0, 100.0])
+        )
+        no_water_count = confident_no_water_mask.sum()
+        df_flagged.loc[confident_no_water_mask, 'passed_heuristics'] = False
+        df_flagged.loc[confident_no_water_mask, 'is_censored'] = False
+
+    # Guarantee that no record failing heuristics retains valid censored status
+    df_flagged.loc[~df_flagged['passed_heuristics'], 'is_censored'] = False
+
     # Summarize results cleanly in the terminal
     total_failed = (~df_flagged['passed_heuristics']).sum()
     censored_count = df_flagged['is_censored'].sum()
-    true_errors = total_failed - censored_count
+    true_errors = total_failed - no_water_count
 
-    print(f"  -> Flagged {total_failed} records bypassing Bayesian evaluation:")
-    print(f"     - {censored_count} Right-Censored (Disk reached bottom visibly)")
+    print(f"  -> Rejected {total_failed} records (excluded from Bayesian model):")
+    print(f"     - {no_water_count} Confident No Water (Bare land / Snow + >1000m from known waterbody)")
     print(f"     - {true_errors} Heuristic Failures (Typos, negatives, depth contradictions)")
+    print(f"  -> {censored_count} Right-Censored samples included in model (as lower bounds)")
+    print(f"  -> {(df_flagged['passed_heuristics']).sum()} total records entering Bayesian model")
 
     return df_flagged

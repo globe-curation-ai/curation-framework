@@ -3,7 +3,14 @@
 
 # Generated output & raw data
 output
-data
+data/*
+!data/water_distances.sqlite
+
+# Credentials
+*credentials*.json
+*service-account*.json
+*service_account*.json
+*.pem
 
 # Test cache
 .pytest_cache
@@ -22,3 +29,6 @@ data
 
 # Scratch / one-off scripts
 scratch
+
+# Local cache
+cache/

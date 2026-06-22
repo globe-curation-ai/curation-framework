@@ -10,6 +10,7 @@ from src.curation.tube_validator import validate_tube_data
 from src.curation.disk_model import BayesianDiskModel
 from src.curation.tube_model import BayesianTubeModel
 from src.curation.tube_length_estimator import apply_all_tube_estimations
+from src.curation.distance_to_water import compute_water_distances
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="arviz")
 
@@ -27,28 +28,34 @@ def print_summary(instrument_name: str, df: pd.DataFrame) -> None:
     """Calculates and prints a standardized, mutually exclusive summary of the curation results."""
     total = len(df)
 
-    # Safely extract boolean masks using .get() to avoid KeyError if columns are missing
     passed_h = df['passed_heuristics'].astype(bool)
-    is_outlier = df.get('is_statistical_outlier', pd.Series(False, index=df.index)).astype(bool)
     is_censored = df.get('is_censored', pd.Series(False, index=df.index)).astype(bool)
 
+    # Ternary outlier status: True = outlier, False = not outlier, None = censored (not evaluated)
+    outlier_col = df.get('is_statistical_outlier', pd.Series(None, index=df.index))
+    is_outlier = outlier_col.eq(True)  # Only True matches, None and False do not
+
     # Calculate mutually exclusive subsets so they sum exactly to the total
-    censored = is_censored.sum()
-    heuristic_errors = (~passed_h & ~is_censored).sum()
+    heuristic_errors = (~passed_h).sum()
+    censored_in_model = (passed_h & is_censored).sum()
     outliers = (passed_h & is_outlier).sum()
-    valid = (passed_h & ~is_outlier).sum()
+    valid = (passed_h & ~is_outlier & ~is_censored).sum()
 
     print(f"{instrument_name.upper()} SUMMARY:")
     print(f"  Total Observations: {total}")
     print(f"  Valid Samples:      {valid}")
-    print(f"  Right-Censored:     {censored} (Clear water, preserved for analysis)")
+    print(f"  Right-Censored:     {censored_in_model} (Lower bounds, included in model)")
     print(f"  Bayesian Outliers:  {outliers} (Statistical anomalies)")
     print(f"  Heuristic Errors:   {heuristic_errors} (Typos, bounds, contradictions)")
     print("-" * 50)
 
     # Sanity check for the logs
-    if (valid + censored + outliers + heuristic_errors) != total:
-        print("  [WARNING]: Summary buckets do not equal total observations. Check boolean logic.")
+    if (valid + censored_in_model + outliers + heuristic_errors) != total:
+        print(
+            f"  [WARNING]: Summary buckets "
+            f"({valid + censored_in_model + outliers + heuristic_errors}) "
+            f"do not equal total observations ({total}). Check boolean logic."
+        )
 
 
 def main():
@@ -68,6 +75,10 @@ def main():
     print("Initializing normalized data ingestion...")
     df_merged = db_manager.load_and_merge_data(config)
     print(f"Total merged records available for processing: {len(df_merged)}")
+
+    if config.get('distance_to_water', {}).get('enabled', False):
+        print("\nEnriching observations with water distance metadata...")
+        df_merged = compute_water_distances(df_merged, config)
 
     print("Routing data streams by instrument type...")
     df_disk, df_tube = db_manager.split_by_instrument(df_merged)
