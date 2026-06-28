@@ -78,3 +78,14 @@ bayesian_model:
     global_baseline_sigma: 1.0
     site_offset_sigma: 0.5
     observation_noise: 0.2
+
+# -----------------------------------------------------------------------------
+# INCREMENTAL / CONTINUOUS CURATION
+# -----------------------------------------------------------------------------
+incremental:
+  inbox: "inbox/"
+  processed: "inbox/processed/"
+  trace_dir: "output/traces/"
+  disk_trace_file: "disk_trace.nc"
+  tube_trace_file: "tube_trace.nc"
+  retrain_after_ingest: true

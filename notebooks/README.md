@@ -11,8 +11,8 @@ To perfectly reproduce the findings and figures in the manuscript, please execut
 * **Expected Execution Time:** < 1 minute
 
 ### `01_curation_pipeline.ipynb`
-* **Purpose:** The primary data engine. This notebook ingests the raw, publicly available NASA GLOBE hydrology measurements and merges them with the official GLOBE site metadata to construct a normalized, 4-table relational SQLite database. It applies strict heuristic gates to isolate right-censored (clear water) readings, and then executes the PyMC MCMC samplers to isolate systemic noise from natural environmental drift.
-* **Expected Execution Time:** 30 - 45 minutes (Hardware dependent; driven by the 4-chain NUTS sampling process across thousands of sites).
+* **Purpose:** The primary data engine. This notebook ingests the raw, publicly available NASA GLOBE hydrology measurements and merges them with the official GLOBE site metadata to construct a normalized, 4-table relational SQLite database. It enriches the geographic data by computing the distance to the nearest permanent water body, applies site-specific tube length estimations, and executes strict heuristic gates to isolate right-censored (clear water) readings. Finally, it executes the PyMC MCMC samplers to isolate systemic noise from natural environmental drift.
+* **Expected Execution Time:** 45 - 60 minutes (Hardware dependent; driven by the 4-chain NUTS sampling process across thousands of sites).
 
 > Depending on your environment, the progress meter may remain stagnant at 0% for the entire duration of the execution while the sampler runs in the background. The UI typically jumps directly to 100% only upon completion. **Please allow the process to finish and avoid terminating the session prematurely.**
 

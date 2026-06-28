@@ -63,12 +63,18 @@ def main():
     Executes the primary data curation pipeline.
     Orchestrates normalized data ingestion, instrument routing, and Bayesian evaluation.
     """
-    print("Starting Bayesian Hierarchical Curation Pipeline...")
+    print("Starting Bayesian Hierarchical Curation Pipeline (Bootstrap)...")
 
     config = load_config()
     db_path = config.get("paths", {}).get("database", "data/master_registry.sqlite")
     flagged_dir = config.get("paths", {}).get("flagged_output", "data/flagged/")
     window_years = config.get("drift", {}).get("window_years", 10)
+
+    # Trace paths for model persistence (used by ingest.py)
+    inc_config = config.get("incremental", {})
+    trace_dir = inc_config.get("trace_dir", "output/traces/")
+    disk_trace_path = os.path.join(trace_dir, inc_config.get("disk_trace_file", "disk_trace.nc"))
+    tube_trace_path = os.path.join(trace_dir, inc_config.get("tube_trace_file", "tube_trace.nc"))
 
     db_manager = DatabaseManager(db_path=db_path, overwrite=True)
 
@@ -98,6 +104,10 @@ def main():
         db_manager.export_curated_data(curated_disk, "measurements_disk")
         db_manager.export_audit_log(curated_disk, os.path.join(flagged_dir, "flagged_disk.csv"))
 
+        # Save trace for the incremental pipeline
+        os.makedirs(trace_dir, exist_ok=True)
+        disk_model.save_trace(disk_trace_path)
+
     if not df_tube.empty:
         print(f"\n--- Processing {len(df_tube)} Transparency Tube records ---")
         print("  -> Applying tube length estimations...")
@@ -111,6 +121,10 @@ def main():
 
         db_manager.export_curated_data(curated_tube, "measurements_tube")
         db_manager.export_audit_log(curated_tube, os.path.join(flagged_dir, "flagged_tube.csv"))
+
+        # Save trace for the incremental pipeline
+        os.makedirs(trace_dir, exist_ok=True)
+        tube_model.save_trace(tube_trace_path)
 
     print("\n" + "=" * 50)
     print("             PIPELINE EXECUTION SUMMARY")

@@ -45,7 +45,7 @@ class BayesianDiskModel:
         if 'passed_heuristics' not in self.df_full.columns:
             self.df_full['passed_heuristics'] = True
 
-        self.df_valid = self.df_full[self.df_full['passed_heuristics']].copy()
+        self.df_valid = self.df_full[self.df_full['passed_heuristics'] == 1].copy()
 
         # Ternary outlier status: True (outlier), False (not outlier), None (censored, not evaluated)
         self.df_full['is_statistical_outlier'] = None
@@ -218,9 +218,78 @@ class BayesianDiskModel:
         lower_bound, upper_bound = np.percentile(simulated_obs, [2.5, 97.5], axis=0)
 
         # Only evaluate outlier status for uncensored observations
-        is_censored = self.df_valid['is_censored'].values
+        is_censored = self.df_valid['is_censored'].astype(bool).values
         outlier_mask = (self.df_valid[self.target_col] < lower_bound) | (self.df_valid[self.target_col] > upper_bound)
 
         # Ternary assignment: True/False for uncensored, None for censored
         self.df_valid['is_statistical_outlier'] = None  # default: not evaluated
+        self.df_valid.loc[~is_censored, 'is_statistical_outlier'] = outlier_mask[~is_censored]
+
+    def save_trace(self, filepath: str):
+        import os
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        self.trace.to_netcdf(filepath)
+
+    def load_trace(self, filepath: str):
+        import arviz as az
+        self.trace = az.from_netcdf(filepath)
+
+    def evaluate_from_trace(self, df: pd.DataFrame, trace_path: str, window_years: float = 3.0) -> pd.DataFrame:
+        """Loads a trace and evaluates new observations directly against the posterior without retraining."""
+        self.df_full = df.copy()
+
+        if 'passed_heuristics' not in self.df_full.columns:
+            self.df_full['passed_heuristics'] = True
+
+        self.df_valid = self.df_full[self.df_full['passed_heuristics'] == 1].copy()
+        self.df_full['is_statistical_outlier'] = None
+
+        if self.df_valid.empty:
+            return self.df_full
+
+        self._prepare_data(window_years)
+
+        if self.df_valid.empty:
+            return self.df_full
+
+        self.load_trace(trace_path)
+        
+        # Evaluate new sites against global and water-source posteriors 
+        # since they may be absent from the trace's site-specific offsets.
+        post = self.trace.posterior
+        
+        # Create a fast mask for outliers
+        self._flag_outliers_from_trace()
+
+        self.df_full.loc[self.df_valid.index, 'is_statistical_outlier'] = self.df_valid['is_statistical_outlier']
+        return self.df_full
+
+    def _flag_outliers_from_trace(self):
+        """Flags outliers for new observations against an already trained trace."""
+        post = self.trace.posterior
+        
+        # Rely on the generalized global and water-source posteriors to establish 
+        # statistical boundaries for new, unmapped observations.
+        water_source_mu = post["water_source_mu"].values.mean(axis=(0, 1))
+        water_source_sigma = post["water_source_sigma"].values.mean(axis=(0, 1))
+        obs_sigma = post["obs_sigma"].values.mean(axis=(0, 1))
+        
+        source_idx = self.df_valid[self.water_source_col].astype('category').cat.codes.values
+        
+        # Use the mean posteriors to simulate bounds
+        mu_pred = np.zeros(len(self.df_valid))
+        for i in range(len(self.df_valid)):
+            idx = source_idx[i]
+            if idx >= len(water_source_mu) or idx < 0:
+                idx = 0 # fallback to 0
+            mu_pred[i] = water_source_mu[idx]
+            
+        # 95% interval for lognormal
+        lower_bound = np.exp(mu_pred - 1.96 * obs_sigma)
+        upper_bound = np.exp(mu_pred + 1.96 * obs_sigma)
+        
+        is_censored = self.df_valid['is_censored'].astype(bool).values
+        outlier_mask = (self.df_valid[self.target_col] < lower_bound) | (self.df_valid[self.target_col] > upper_bound)
+        
+        self.df_valid['is_statistical_outlier'] = None
         self.df_valid.loc[~is_censored, 'is_statistical_outlier'] = outlier_mask[~is_censored]
