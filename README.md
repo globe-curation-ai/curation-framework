@@ -106,5 +106,8 @@ Manual data downloads are not required. Execute the master recursive curation fr
    
 *Note: The first execution acts as a "Bootstrap" run to build the initial Master Registry, generate the normalized SQLite tables, and establish the first set of site-specific Bayesian boundaries.*
 
+## Contact
+globecicd ((at)) gmail.com
+
 ## License
 All code is released under the MIT License, facilitating open modification and integration into broader scientific monitoring and decision-support systems.
